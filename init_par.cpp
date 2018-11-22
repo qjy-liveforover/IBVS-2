@@ -177,6 +177,7 @@ desired_pos.push_back(desired_roll);
     vector<VectorXd> img_vel_con(6);
     VectorXd a(6);
     vector<VectorXd> e_con(3, a);
+    VectorXd cart_velocity(6);
 
     ros::Rate loop_rate(100);
     int count = 0;
@@ -216,10 +217,9 @@ while(ros::ok())
 
 /*根据上面算出的当前的位置和姿态，求解每个关节应该发送的速度, 运用增量式PID求速度*/
     double d[6];
-    double p_k = 0.1, i_k = 0.1, d_k = 0.1;
+    double p_k = 0.1, i_k = 0.01, d_k = 0.01;
     VectorXd e(6);
 
-    VectorXd cart_velocity(6);
     VectorXd vel_delta(6);
 
     e[0] = (desired_pos[0] - current_pos[0]);
@@ -232,23 +232,25 @@ while(ros::ok())
     e_con[0] = e;
 
     if(count_pid == 0) {
+        e_con[1] = e;
+        e_con[2] = e;
 
-        cart_velocity[0] = (p_k * (desired_pos[0] - current_pos[0]));
-        cart_velocity[1] = (p_k * (desired_pos[1] - current_pos[1]));
-        cart_velocity[2] = (p_k * (desired_pos[2] - current_pos[2]));
-        cart_velocity[3] = (p_k * (desired_pos[3] - current_pos[3]));
-        cart_velocity[4] = (p_k * (desired_pos[4] - current_pos[4]));
-        cart_velocity[5] = (p_k * (desired_pos[5] - current_pos[5]));
+        cart_velocity[0] = p_k * e_con[0][0];
+        cart_velocity[1] = p_k * e_con[0][1];
+        cart_velocity[2] = p_k * e_con[0][2];
+        cart_velocity[3] = p_k * e_con[0][3];
+        cart_velocity[4] = p_k * e_con[0][4];
+        cart_velocity[5] = p_k * e_con[0][5];
     }
 
     else
     {
-        vel_delta[0] = p_k * (e_con[0][0] - e_con[1][0]) + p_i * e_con[0][0] + p_d * (e_con[0][0] - 2 * e_con[1][0] + e_con[2][0]);
-        vel_delta[1] = p_k * (e_con[0][1] - e_con[1][1]) + p_i * e_con[0][1] + p_d * (e_con[0][1] - 2 * e_con[1][1] + e_con[2][1]);
-        vel_delta[2] = p_k * (e_con[0][2] - e_con[1][2]) + p_i * e_con[0][2] + p_d * (e_con[0][2] - 2 * e_con[1][2] + e_con[2][2]);
-        vel_delta[3] = p_k * (e_con[0][3] - e_con[1][3]) + p_i * e_con[0][3] + p_d * (e_con[0][3] - 2 * e_con[1][3] + e_con[2][3]);
-        vel_delta[4] = p_k * (e_con[0][4] - e_con[1][4]) + p_i * e_con[0][4] + p_d * (e_con[0][4] - 2 * e_con[1][4] + e_con[2][4]);
-        vel_delta[5] = p_k * (e_con[0][5] - e_con[1][5]) + p_i * e_con[0][5] + p_d * (e_con[0][5] - 2 * e_con[1][5] + e_con[2][5]);
+        vel_delta[0] = p_k * (e_con[0][0] - e_con[1][0]) + i_k * e_con[0][0] + d_k * (e_con[0][0] - 2 * e_con[1][0] + e_con[2][0]);
+        vel_delta[1] = p_k * (e_con[0][1] - e_con[1][1]) + i_k * e_con[0][1] + d_k * (e_con[0][1] - 2 * e_con[1][1] + e_con[2][1]);
+        vel_delta[2] = p_k * (e_con[0][2] - e_con[1][2]) + i_k * e_con[0][2] + d_k * (e_con[0][2] - 2 * e_con[1][2] + e_con[2][2]);
+        vel_delta[3] = p_k * (e_con[0][3] - e_con[1][3]) + i_k * e_con[0][3] + d_k * (e_con[0][3] - 2 * e_con[1][3] + e_con[2][3]);
+        vel_delta[4] = p_k * (e_con[0][4] - e_con[1][4]) + i_k * e_con[0][4] + d_k * (e_con[0][4] - 2 * e_con[1][4] + e_con[2][4]);
+        vel_delta[5] = p_k * (e_con[0][5] - e_con[1][5]) + i_k * e_con[0][5] + d_k * (e_con[0][5] - 2 * e_con[1][5] + e_con[2][5]);
 
         cart_velocity[0] = cart_velocity[0] + vel_delta[0];
         cart_velocity[1] = cart_velocity[1] + vel_delta[1];
@@ -257,6 +259,20 @@ while(ros::ok())
         cart_velocity[4] = cart_velocity[4] + vel_delta[4];
         cart_velocity[5] = cart_velocity[5] + vel_delta[5];
     }
+
+
+    for(int i =0; i < 3; i++){
+       // for(int j = 0; j < 6; j++){
+            cout << e_con[i] << endl;
+            cout << "  " << endl;
+        //}
+    }
+
+    VectorXd e_tmp;
+
+    e_tmp = e_con[1];
+    e_con[1] = e_con[0];
+    e_con[2] = e_tmp;
 
   for(int i = 0; i < 6; i++)
   {
@@ -395,7 +411,7 @@ while(ros::ok())
     l_p = img_vel_all * cart_vel_all.inverse();
 
     cout << "计算出的初始图像雅克比矩阵为：" << l_p << endl;
-    if(count_i == 10) break;
+    //if(count_i == 10) break;
     count_i++;
   }
 

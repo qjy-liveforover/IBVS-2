@@ -5,6 +5,28 @@
 #include <cmath>
 #include <stdlib.h>
 #include <math.h>
+#include <unistd.h>
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/features2d/features2d.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+
+#include <kdl/kdl.hpp>
+#include <kdl/chain.hpp>
+#include <kdl/tree.hpp>
+#include <kdl/segment.hpp>
+#include <kdl/chainfksolver.hpp>
+#include <kdl/chainiksolver.hpp>
+#include <kdl/chainiksolverpos_lma.hpp>
+#include <kdl/chainiksolverpos_nr.hpp>
+#include <kdl/chainiksolverpos_nr_jl.hpp>
+#include <kdl/chainiksolvervel_pinv.hpp>
+#include <kdl_parser/kdl_parser.hpp>
+#include <kdl/chainfksolverpos_recursive.hpp>
+#include <kdl/frames_io.hpp>
+#include <kdl/frames.hpp>
+#include <kdl/frames_io.hpp>
 
 #include <Eigen/Dense>
 #include <Eigen/Core>
@@ -12,15 +34,22 @@
 
 #include <ros/ros.h>
 #include "std_msgs/String.h"
+#include <sensor_msgs/JointState.h>
+#include "trajectory_msgs/JointTrajectory.h"
 #include "/home/ctyou/ibvs_ros/devel/include/ibvs_core/ibvs_core.h"
 
 using namespace std;
 using namespace Eigen;
+using namespace cv;
+using namespace KDL;
 
 #define N 50   //提取的特征点数量
 
 double joint_position[6] = {1, 1, 1, 1, 1, 1};
 MatrixXd x_0(2 * N * 6, 1);     //初始化的图像雅克比矩阵转化成的列向量
+MatrixXd a = MatrixXd::Zero(2 * N, 1);
+vector<Matrix> e_imgvel_con(3, a);
+
 
 //MatrixXd P_0_ = MatrixXd::Zero(N * 6, N * 6);
 
@@ -37,7 +66,6 @@ double GenerateGaussianNum(double mean, double sigma)
 
    static double v1, v2, s;
    static int phase = 0;
-   double RAND_MAX = 1.0;
    double x;
 
     if(phase == 0)
@@ -63,12 +91,11 @@ double GenerateGaussianNum(double mean, double sigma)
 }
 
 //机器人位置函数
-void joint_position_callback(sensor_msg::JointState msg)
+void joint_position_callback(sensor_msgs::JointState msg)
 {
     for(int i = 0; i < 5; i++)
         joint_position[i] = msg.position[i];
 }
-
 
 //主函数
 int main(int argc, char ** argv)
@@ -88,13 +115,32 @@ int main(int argc, char ** argv)
 
     //计算目标图像特征
     cout << "开始计算目标图像特征，请准备就绪，准备就绪后，请按任意键！" << endl;
+    system("pause");
+    Mat src_desired,src_now;
+    Mat src_desired_l, src_now_l;
+    Mat src_desired_l_gray, src_now_l_gray;
+    vector<KeyPoint> keypoints_desired, keypoints_now;
+    Mat descriptors_desired, descriptors_now;
+    Ptr<ORB> orb = ORB::create( N, 1.2f, 8, 31, 0, 2, ORB::HARRIS_SCORE, 31, 20);
+    double min_dist = 1000, max_dist = 0;
 
+    cap >> src_desired;
+
+    if(src_desired.empty())
+    {
+        cout << "src_pre is empty" << endl;
+        return -1;
+    }
+
+    src_desired_l = src_desired.colRange(1,640).clone();
+    //cvtColor(src_pre_l, src_pre_gray, CV_BGR2GRAY, 1);
+    orb -> detect(src_desired_l, keypoints_desired);
+    orb -> compute(src_desired_l, keypoints_desired, descriptors_desired);
 
     MatrixXd x_k_ = MatrixXd::Zero(2 * N * 6,1);   //预估后的状态矩阵
     MatrixXd x_k = MatrixXd::Zero(2 * N * 6,1);    //校正后的状态矩阵
-    MatrixXd A(2 * N, 2 * N);
-    A << MatrixXd::Identity(2 * N, 2 * N);
-    MatrixXd H = MatrixXd::Zero(2 * N, 2 * N * 6);
+    MatrixXd A = MatrixXd::Identity(2 * N, 2 * N);
+    MatrixXd h_k = MatrixXd::Zero(2 * N, 2 * N * 6);
     MatrixXd k_k = MatrixXd::Zero(2 * N * 6, 2 * N);      //卡尔曼增益矩阵
     MatrixXd p_k_ = MatrixXd::Zero(2 * N * 6, 2 * N * 6); //预估误差协方差矩阵
     MatrixXd p_k = MatrixXd::Zero(2 * N * 6, 2 * N * 6);  //校正后的误差协方差矩阵
@@ -111,16 +157,19 @@ int main(int argc, char ** argv)
     rand(i, 0) = a(0, 0);
     }
 
-    vector<MatrixXd> X_k_, X_k, P_k_, P_k, K_k, Y_k;
-//X_k_.push_back(x_0);
+    vector<MatrixXd> X_k_, X_k, P_k_, P_k, K_k, Y_k, H_k;
+    H_k.push_back(h_k);
     X_k.push_back(x_0);
-//P_k_.push_back();
-//P_k.push_back();
+
+    JntArray joint_vel = JntArray(nj);
+    MatrxXd joint_vel_ma_0 = MatrixXd::Zero(6, 1);
+    MatrxXd joint_vel_ma_1 = MatrixXd::Zero(6, 1);
+    MatrxXd joint_vel_ma_2 = MatrixXd::Zero(6, 1);
 
     ros::init(argc, argv, "kalman");
-    ros::NodeHandle n;
+    ros::NodeHandle n_ros;
 
-    ros::Subscriber sub_joint_state = n.subscribe("kalman", 100, jpint_position_callback);
+    ros::Subscriber sub_joint_state = n_ros.subscribe("alman", 100, joint_position_callback);
 
     ros::Rate loop_rate(100);
 
@@ -128,23 +177,23 @@ int main(int argc, char ** argv)
 
     while(ros::ok())
     {
-//预测值
+    //预测值
     x_k_ = A * X_k[j - 1];
     X_k_.push_back(x_k_);
-//预测误差协方差矩阵
+    //预测误差协方差矩阵
     p_k_ = A * P_k[j - 1] * A.transpose() + Q;
     P_k_.push_back(p_k_);
-//开始更新
-    k_k = P_k_[j] * H.transpose() * (H * P_k_[j] * H.transpose() + R).inverse();
+    //开始更新
+    k_k = P_k_[j] * H_k[j - 1].transpose() * (H_k[j - 1] * P_k_[j] * H_k[j - 1].transpose() + R).inverse();
     K_k.push_back(k_k);
-//测量值
-    y_k = H * X_k[j] + rand;     //此处的H也需要订阅,为啥？
+    //测量值
+    y_k = H_k[j - 1] * X_k[j] + rand;
     Y_k.push_back(y_k);
-//估计值
-    x_k = X_k_[j] + K_k[j] * (Y_k[j] - H * X_k_[j]);
+    //估计值
+    x_k = X_k_[j] + K_k[j] * (Y_k[j] - H_k[j - 1] * X_k_[j]);
     X_k.push_back(x_k);
-//估计误差协方差矩阵
-    p_k = (MatrixXd::Identity(N, N) - K_k[j] * H) * P_k_[j];
+    //估计误差协方差矩阵
+    p_k = (MatrixXd::Identity(N, N) - K_k[j] * H_k[j - 1]) * P_k_[j];
     P_k_.push_back(p_k);
 
     int m_n = 0;
@@ -160,8 +209,9 @@ int main(int argc, char ** argv)
     }
 
     ChainJntToJacSolver jacsolver = ChainToJacSolver(my_chain);
+    unsigned int nj = my_chain.getNrOfJoints();
     JntArray joint_pos(6);
-    for(int i = 0; i < 5; i++)
+    for(unsigned int i = 0; i < 5; i++)
     {
         joint_pos(i) = joint_position[i];
     }
@@ -181,7 +231,7 @@ int main(int argc, char ** argv)
     MatrixXd jac_all = img_jacobi * ro_jacobi;
     JacobiSVD<MatrixXd> svd(jac_all, ComputeFullu | computeFullv);
     int asize = svd.singularValues().size();
-    MatrixXd values = MatrixXcd::Zero(asizze, asize);
+    MatrixXd values = MatrixXcd::Zero(asize, asize);
     for(int i = 0; i < asize; i++)
     {
         values(i, i) = svd.singularValues()(i);
@@ -193,7 +243,79 @@ int main(int argc, char ** argv)
 
     MatrixXd jac_inv = (svd.matrixV()) * (S_inv) * (svd.matrixU().transpose()); //计算出的广义逆
 
-    ros::spinOnce();
+    //开始计算当前的图像特征
+    cap >> src_now;
+    if(src_now.empty())
+    {
+        cout << "src_now is empty" << endl;
+        return -1;
+    }
+
+    src_now_l = src_now.colRange(1,640).clone();
+    //cvtColor(src_now_l, src_now_gray, CV_BGR2GRAY, 1);
+    orb -> detect(src_now_l, keypoints_now);
+    orb -> compute(src_pre_l, keypoints_now, descriptors_now);
+
+    vector<DMatch> matches;
+    BFMatcher matcher (NORM_HAMMING);
+    matcher.match(descriptors_pre, descriptors_now, matches);
+
+    MatrixXd img_velocity(2 * N, 1);  //这就是图像特征差
+    for(int i = 0; i < matches.size(); i = i + 2)
+    {
+        img_velocity(i, 0) = (keypoints_now[matches[i].trainIdx].pt.x - keypoints_pre[matches[i].queryIdx].pt.x);
+        img_velocity(i + 1, 0) = (keypoints_now[matches[i].trainIdx].pt.y - keypoints_pre[matches[i].queryIdx].pt.y);
+    }
+
+    e_imgvel_con[0] = img_velocoty;
+
+    double p_k = 0.1, i_k = 0.01, d_k = 0.01;
+    JntArray joint_vel_delta = JntArray(nj);
+
+    if(j == 0)
+    {
+        e_imgvel_con[1] = e_img_vel_con[0];
+        e_imgvel_con[2] = e_img_vel_con[0];
+
+        joint_vel_ma_0 = jac_inv * e_imgvel_con[0];
+
+        joint_vel(0) = p_k * joint_vel_ma_0(0, 0);
+        joint_vel(1) = p_k * joint_vel_ma_0(1, 0);
+        joint_vel(2) = p_k * joint_vel_ma_0(2, 0);
+        joint_vel(3) = p_k * joint_vel_ma_0(3, 0);
+        joint_vel(4) = p_k * joint_vel_ma_0(4, 0);
+        joint_vel(5) = p_k * joint_vel_ma_0(5, 0);
+    }
+
+    else
+    {
+        joint_vel_ma_0 = jac_inv * e_imgvel_con[0];
+        joint_vel_ma_1 = jac_inv * e_imgvel_con[1];
+        joint_vel_ma_2 = jac_inv * e_imgvel_con[2];
+
+        joint_vel_delta(0) = p_k * (joint_vel_ma_0(0, 0) - joint_vel_ma_1(0, 0)) + i_k * joint_vel_ma_0(0, 0) + d_k * (joint_vel_ma_0(0, 0) - 2 * joint_vel_ma_1(0, 0) + joint_vel_ma_1(0, 0));
+        joint_vel_delta(1) = p_k * (joint_vel_ma_0(1, 0) - joint_vel_ma_1(1, 0)) + i_k * joint_vel_ma_0(1, 0) + d_k * (joint_vel_ma_0(1, 0) - 2 * joint_vel_ma_1(1, 0) + joint_vel_ma_1(1, 0));
+        joint_vel_delta(2) = p_k * (joint_vel_ma_0(2, 0) - joint_vel_ma_1(2, 0)) + i_k * joint_vel_ma_0(2, 0) + d_k * (joint_vel_ma_0(2, 0) - 2 * joint_vel_ma_1(2, 0) + joint_vel_ma_1(2, 0));
+        joint_vel_delta(3) = p_k * (joint_vel_ma_0(3, 0) - joint_vel_ma_1(3, 0)) + i_k * joint_vel_ma_0(3, 0) + d_k * (joint_vel_ma_0(3, 0) - 2 * joint_vel_ma_1(3, 0) + joint_vel_ma_1(3, 0));
+        joint_vel_delta(4) = p_k * (joint_vel_ma_0(4, 0) - joint_vel_ma_1(4, 0)) + i_k * joint_vel_ma_0(4, 0) + d_k * (joint_vel_ma_0(4, 0) - 2 * joint_vel_ma_1(4, 0) + joint_vel_ma_1(4, 0));
+        joint_vel_delta(5) = p_k * (joint_vel_ma_0(5, 0) - joint_vel_ma_1(5, 0)) + i_k * joint_vel_ma_0(5, 0) + d_k * (joint_vel_ma_0(5, 0) - 2 * joint_vel_ma_1(5, 0) + joint_vel_ma_1(5, 0));
+
+        joint_vel(0) = joint_vel(0) + joint_vel_delta(0);
+        joint_vel(1) = joint_vel(1) + joint_vel_delta(1);
+        joint_vel(2) = joint_vel(2) + joint_vel_delta(2);
+        joint_vel(3) = joint_vel(3) + joint_vel_delta(3);
+        joint_vel(4) = joint_vel(4) + joint_vel_delta(4);
+        joint_vel(5) = joint_vel(5) + joint_vel_delta(5);
+    }
+
+    MatrixXd e_temp(2 * N, 1);
+    //jiezhi
+
+
+
+
+
+        ros::spinOnce();
     loop_rate.sleep();
     j++;
 }

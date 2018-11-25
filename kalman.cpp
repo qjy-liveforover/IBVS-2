@@ -25,6 +25,7 @@
 #include <kdl/chainiksolvervel_pinv.hpp>
 #include <kdl_parser/kdl_parser.hpp>
 #include <kdl/chainfksolverpos_recursive.hpp>
+#include <kdl/chainjnttojacsolver.hpp>
 #include <kdl/frames_io.hpp>
 #include <kdl/frames.hpp>
 #include <kdl/frames_io.hpp>
@@ -49,7 +50,7 @@ using namespace KDL;
 double joint_position[6] = {1, 1, 1, 1, 1, 1};
 MatrixXd x_0(2 * N * 6, 1);     //初始化的图像雅克比矩阵转化成的列向量
 MatrixXd a = MatrixXd::Zero(2 * N, 1);
-vector<Matrix> e_imgvel_con(3, a);
+vector<MatrixXd> e_imgvel_con(3, a);
 
 //高斯随机数产生器
 double GenerateGaussianNum(double mean, double sigma)
@@ -91,8 +92,6 @@ void joint_position_callback(sensor_msgs::JointState msg)
 //主函数
 int main(int argc, char ** argv)
 {
-    ros::spinOnce();
-    loop_rate.sleep();
 
     Tree my_tree;
     if(!kdl_parser::treeFromFile("/home/ctyou/ibvs_ros/src/ur/universal_robot-kinetic-devel/ur_description/urdf/ur3_robot.urdf", my_tree))
@@ -106,7 +105,24 @@ int main(int argc, char ** argv)
     if(!exit_value)
         ROS_ERROR("Failed to convert to chain");
 
+    unsigned int nj = my_chain.getNrOfJoints();
+
     //计算目标图像特征
+    VideoCapture cap;
+    cap.open(1);
+
+    if(!cap.isOpened())
+    {
+        cerr << "couldn't open capture" << endl;
+        return -1;
+    }
+
+    cap.set(CV_CAP_PROP_FPS, 60);
+    bool bret;
+    bret = cap.set(CV_CAP_PROP_FRAME_WIDTH, 1280);
+    bret = cap.set(CV_CAP_PROP_FRAME_HEIGHT, 480);
+
+
     cout << "开始计算目标图像特征，请准备就绪，准备就绪后，请按任意键！" << endl;
     system("pause");
     Mat src_desired,src_now;
@@ -166,9 +182,9 @@ int main(int argc, char ** argv)
     X_k.push_back(x_0);
 
     JntArray joint_vel = JntArray(nj);
-    MatrxXd joint_vel_ma_0 = MatrixXd::Zero(6, 1);
-    MatrxXd joint_vel_ma_1 = MatrixXd::Zero(6, 1);
-    MatrxXd joint_vel_ma_2 = MatrixXd::Zero(6, 1);
+    MatrixXd joint_vel_ma_0 = MatrixXd::Zero(6, 1);
+    MatrixXd joint_vel_ma_1 = MatrixXd::Zero(6, 1);
+    MatrixXd joint_vel_ma_2 = MatrixXd::Zero(6, 1);
 
     ros::init(argc, argv, "kalman");
     ros::NodeHandle n_ros;
@@ -182,6 +198,8 @@ int main(int argc, char ** argv)
 
     while(ros::ok())
     {
+        ros::spinOnce();
+        loop_rate.sleep();
     //预测值
     x_k_ = A * X_k[j - 1];
     X_k_.push_back(x_k_);
@@ -213,7 +231,7 @@ int main(int argc, char ** argv)
        }
     }
 
-    ChainJntToJacSolver jacsolver = ChainToJacSolver(my_chain);
+    ChainJntToJacSolver jacsolver = ChainJntToJacSolver(my_chain);
     unsigned int nj = my_chain.getNrOfJoints();
     JntArray joint_pos(6);
     for(unsigned int i = 0; i < 5; i++)
@@ -234,7 +252,7 @@ int main(int argc, char ** argv)
     }
 
     MatrixXd jac_all = img_jacobi * ro_jacobi;
-    JacobiSVD<MatrixXd> svd(jac_all, ComputeFullu | computeFullv);
+    JacobiSVD<MatrixXd> svd(jac_all, ComputeFullU | ComputeFullV);
     int asize = svd.singularValues().size();
     MatrixXd values = MatrixXd::Zero(asize, asize);
     for(int i = 0; i < asize; i++)
@@ -263,24 +281,24 @@ int main(int argc, char ** argv)
 
     vector<DMatch> matches;
     BFMatcher matcher (NORM_HAMMING);
-    matcher.match(descriptors_pre, descriptors_now, matches);
+    matcher.match(descriptors_desired, descriptors_now, matches);
 
     MatrixXd img_velocity(2 * N, 1);  //这就是图像特征差
     for(int i = 0; i < matches.size(); i = i + 2)
     {
-        img_velocity(i, 0) = (keypoints_now[matches[i].trainIdx].pt.x - keypoints_pre[matches[i].queryIdx].pt.x);
-        img_velocity(i + 1, 0) = (keypoints_now[matches[i].trainIdx].pt.y - keypoints_pre[matches[i].queryIdx].pt.y);
+        img_velocity(i, 0) = (keypoints_now[matches[i].trainIdx].pt.x - keypoints_desired[matches[i].queryIdx].pt.x);
+        img_velocity(i + 1, 0) = (keypoints_now[matches[i].trainIdx].pt.y - keypoints_desired[matches[i].queryIdx].pt.y);
     }
 
-    e_imgvel_con[0] = img_velocoty;
+    e_imgvel_con[0] = img_velocity;
 
     double p_k = 0.1, i_k = 0.01, d_k = 0.01;
     JntArray joint_vel_delta = JntArray(nj);
 
     if(j == 0)
     {
-        e_imgvel_con[1] = e_img_vel_con[0];
-        e_imgvel_con[2] = e_img_vel_con[0];
+        e_imgvel_con[1] = e_imgvel_con[0];
+        e_imgvel_con[2] = e_imgvel_con[0];
 
         joint_vel_ma_0 = jac_inv * e_imgvel_con[0];
 
@@ -347,6 +365,18 @@ int main(int argc, char ** argv)
     velocity_msg.points[0].velocities[5] = joint_vel(5);
 
     vel_to_pub.publish(velocity_msg);
+
+    int vel_count = 0;
+    for(int i = 0; i < 2 * N; i++)
+    {
+        for(int j_count = 0; j_count < 6; j_count++)
+        {
+            h_k(i, vel_count) = joint_vel(j_count);
+            vel_count++;
+        }
+    }
+
+    H_k.push_back(h_k);
 
     j++;
 }

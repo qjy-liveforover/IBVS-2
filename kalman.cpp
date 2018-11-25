@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <unistd.h>
+#include <fstream>
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/features2d/features2d.hpp>
@@ -50,16 +51,6 @@ MatrixXd x_0(2 * N * 6, 1);     //初始化的图像雅克比矩阵转化成的�
 MatrixXd a = MatrixXd::Zero(2 * N, 1);
 vector<Matrix> e_imgvel_con(3, a);
 
-
-//MatrixXd P_0_ = MatrixXd::Zero(N * 6, N * 6);
-
-//订阅函数：X_0和P_0初始化数据
-//void init_par_callback(ibvs_core::ibvs_core msg)
-//{
-//for(int i = 0; i < N; i ++)
-//x_0(i, 0) = msg.x_init[i];
-//}
-
 //高斯随机数产生器
 double GenerateGaussianNum(double mean, double sigma)
 {
@@ -100,6 +91,8 @@ void joint_position_callback(sensor_msgs::JointState msg)
 //主函数
 int main(int argc, char ** argv)
 {
+    ros::spinOnce();
+    loop_rate.sleep();
 
     Tree my_tree;
     if(!kdl_parser::treeFromFile("/home/ctyou/ibvs_ros/src/ur/universal_robot-kinetic-devel/ur_description/urdf/ur3_robot.urdf", my_tree))
@@ -150,6 +143,17 @@ int main(int argc, char ** argv)
 
     MatrixXd rand = MatrixXd::Zero(2 * N, 1);
 
+    ifstream infile;
+    infile.open("/home/ctyou/ibvs_ros/src/ibvs_core/x_0.txt", ios::in);
+    if(infile.is_open())
+        cout << "can not open!" << endl;
+    int x_0_count = 0;
+    while(!infile.eof())
+    {
+        infile >> x_0(x_0_count, 0);
+        x_0_count++;
+    }
+
     for(int i = 0; i < 2 * N; i ++)
     {
     MatrixXd a(1,1);
@@ -170,6 +174,7 @@ int main(int argc, char ** argv)
     ros::NodeHandle n_ros;
 
     ros::Subscriber sub_joint_state = n_ros.subscribe("alman", 100, joint_position_callback);
+    ros::Publisher  vel_to_pub = n_ros.advertise<trajectory_msgs::JointTrajectory>("ur_driver/joint_speed",100);
 
     ros::Rate loop_rate(100);
 
@@ -231,7 +236,7 @@ int main(int argc, char ** argv)
     MatrixXd jac_all = img_jacobi * ro_jacobi;
     JacobiSVD<MatrixXd> svd(jac_all, ComputeFullu | computeFullv);
     int asize = svd.singularValues().size();
-    MatrixXd values = MatrixXcd::Zero(asize, asize);
+    MatrixXd values = MatrixXd::Zero(asize, asize);
     for(int i = 0; i < asize; i++)
     {
         values(i, i) = svd.singularValues()(i);
@@ -254,7 +259,7 @@ int main(int argc, char ** argv)
     src_now_l = src_now.colRange(1,640).clone();
     //cvtColor(src_now_l, src_now_gray, CV_BGR2GRAY, 1);
     orb -> detect(src_now_l, keypoints_now);
-    orb -> compute(src_pre_l, keypoints_now, descriptors_now);
+    orb -> compute(src_now_l, keypoints_now, descriptors_now);
 
     vector<DMatch> matches;
     BFMatcher matcher (NORM_HAMMING);
@@ -308,15 +313,41 @@ int main(int argc, char ** argv)
         joint_vel(5) = joint_vel(5) + joint_vel_delta(5);
     }
 
+    //截止条件
+    int zero_count = 0;
+    for(int i = 0; i < 2 * N; i++)
+    {
+        if(e_imgvel_con[0](i, 0) < 0.001)
+            zero_count++;
+    }
+    if(zero_count >= int(4 * N / 3))
+        break;
+
     MatrixXd e_temp(2 * N, 1);
-    //jiezhi
+    e_temp = e_imgvel_con[1];
+    e_imgvel_con[1] = e_imgvel_con[2];
+    e_imgvel_con[2] = e_temp;
 
+    trajectory_msgs::JointTrajectory velocity_msg;
+    velocity_msg.joint_names.resize(6);
+    velocity_msg.joint_names[0]="shoulder_pan_joint";
+    velocity_msg.joint_names[1]="shoulder_lift_joint";
+    velocity_msg.joint_names[2]="elbow_joint";
+    velocity_msg.joint_names[3]="wrist_1_joint";
+    velocity_msg.joint_names[4]="wrist_2_joint";
+    velocity_msg.joint_names[5]="wrist_3_joint";
+    velocity_msg.header.stamp = ros::Time::now();
+    velocity_msg.points.resize(1);
+    velocity_msg.points[0].velocities.resize(6);
+    velocity_msg.points[0].velocities[0] = joint_vel(0);
+    velocity_msg.points[0].velocities[1] = joint_vel(1);
+    velocity_msg.points[0].velocities[2] = joint_vel(2);
+    velocity_msg.points[0].velocities[3] = joint_vel(3);
+    velocity_msg.points[0].velocities[4] = joint_vel(4);
+    velocity_msg.points[0].velocities[5] = joint_vel(5);
 
+    vel_to_pub.publish(velocity_msg);
 
-
-
-        ros::spinOnce();
-    loop_rate.sleep();
     j++;
 }
 

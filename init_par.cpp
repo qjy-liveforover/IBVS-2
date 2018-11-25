@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <unistd.h>
+#include <fstream>
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/features2d/features2d.hpp>
@@ -183,6 +184,7 @@ desired_pos.push_back(desired_roll);
     int count = 0;
     int count_i = 0;
     int count_pid = 0;
+    ofstream outfile;
 
 while(ros::ok())
 {
@@ -242,7 +244,6 @@ while(ros::ok())
         cart_velocity[4] = p_k * e_con[0][4];
         cart_velocity[5] = p_k * e_con[0][5];
     }
-
     else
     {
         vel_delta[0] = p_k * (e_con[0][0] - e_con[1][0]) + i_k * e_con[0][0] + d_k * (e_con[0][0] - 2 * e_con[1][0] + e_con[2][0]);
@@ -366,7 +367,6 @@ while(ros::ok())
   }
 
   /*
-
   vector<DMatch> good_matches;
   for(int i = 0; i < descriptors_pre.rows; i++)
   {
@@ -375,7 +375,7 @@ while(ros::ok())
   }
    */
 
-  VectorXd img_velocity(N);
+  VectorXd img_velocity(2 * N);
   for(int i = 0; i < matches.size(); i = i + 2)
   {
     img_velocity[i] = (keypoints_now[matches[i].trainIdx].pt.x - keypoints_pre[matches[i].queryIdx].pt.x);
@@ -392,7 +392,7 @@ while(ros::ok())
   if(count == 5)
   {
     MatrixXd cart_vel_all(6, 6);
-    MatrixXd img_vel_all(N, 6);
+    MatrixXd img_vel_all(2 * N, 6);
 
     for(int j = 0; j < 6; j++) {
       for (int i = 0; i < 6; i++) {
@@ -401,16 +401,29 @@ while(ros::ok())
     }
 
     for(int j = 0; j < 6; j++) {
-      for (int i = 0; i < N; i++) {
+      for (int i = 0; i < 2 * N; i++) {
         img_vel_all(i, j) = img_vel_con[j][i];
       }
     }
 
-    MatrixXd l_p(N, 6);
+    MatrixXd l_p(2 * N, 6);
 
     l_p = img_vel_all * cart_vel_all.inverse();
 
     cout << "计算出的初始图像雅克比矩阵为：" << l_p << endl;
+    //把算出的矩阵写进txt文档中
+    outfile.open("/home/ctyou/ibvs_ros/src/ibvs_core/x_0.txt", ios::app);
+    if(!outfile.is_open())
+        cout << "can not open!" << endl;
+    for(int i = 0; i < 2 * N; i++)
+    {
+        for(int j = 0; j < 6; j++)
+        {
+            outfile << l_p(i, j) << "\t";
+        }
+        outfile << " " << endl;
+    }
+    outfile.close();
     //if(count_i == 10) break;
     count_i++;
   }

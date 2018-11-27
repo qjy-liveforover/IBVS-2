@@ -2,6 +2,8 @@
 //方法为促使机器人运动6次，并记录下运动的关节速度和图像空间速度，同时也需要机械臂雅克比矩阵来参与运算
 //算正解得末端实际位置---人为给一个期望位置---算逆解得关节速度---发送运动完毕后采集图像特征空间，并记录之前的那个关节速度---重复6次---计算图像雅克比矩阵
 
+//此程序的另一个功能为获取目标图像
+
 #include <iostream>
 #include <stdio.h>
 #include <vector>
@@ -85,6 +87,8 @@ ROS_ERROR("Failed to convert to chain");
 VideoCapture cap;
 cap.open(1);
 
+int key;
+
 if(!cap.isOpened())
 {
 cerr << "couldn't open capture" << endl;
@@ -95,6 +99,26 @@ cap.set(CV_CAP_PROP_FPS, 60);
 bool bret;
 bret = cap.set(CV_CAP_PROP_FRAME_WIDTH, 1280);
 bret = cap.set(CV_CAP_PROP_FRAME_HEIGHT, 480);
+/*
+    for(int i = 0; ; i++)
+    {
+        key = waitKey(30);
+        Mat frame;
+        cap >> frame;
+        if(frame.empty())
+        {
+            cout << "can not open" << endl;
+            break;
+        }
+
+        if(key == 32)
+        {
+            break;
+        }
+
+        imshow("binocular vision video", frame);
+    }
+    */
 
 Mat src_pre,src_now;
 Mat src_pre_l, src_now_l;
@@ -219,7 +243,7 @@ while(ros::ok())
 
 /*根据上面算出的当前的位置和姿态，求解每个关节应该发送的速度, 运用增量式PID求速度*/
     double d[6];
-    double p_k = 0.1, i_k = 0.01, d_k = 0.01;
+    double p_k = 0.01, i_k = 0.001, d_k = 0.01;
     VectorXd e(6);
 
     VectorXd vel_delta(6);
@@ -261,7 +285,6 @@ while(ros::ok())
         cart_velocity[5] = cart_velocity[5] + vel_delta[5];
     }
 
-
     for(int i =0; i < 3; i++){
        // for(int j = 0; j < 6; j++){
             cout << e_con[i] << endl;
@@ -282,7 +305,7 @@ while(ros::ok())
 
     for(int i = 0; i < 6; i++)
     {
-        cout << "现在的第" << i << "个关节的速度为： " << current_pos[i] << endl;
+        cout << "现在的第" << i << "个关节的位置为： " << current_pos[i] << endl;
     }
 
     cout << "与期望坐标的差距： " << endl;
@@ -376,10 +399,14 @@ while(ros::ok())
    */
 
   VectorXd img_velocity(2 * N);
-  for(int i = 0; i < matches.size(); i = i + 2)
+  cout << "matches.size() = " << matches.size() << endl;
+  int point_count = 0;
+  for(int i = 0; i < matches.size(); i++)
   {
-    img_velocity[i] = (keypoints_now[matches[i].trainIdx].pt.x - keypoints_pre[matches[i].queryIdx].pt.x);
-    img_velocity[i + 1] = (keypoints_now[matches[i].trainIdx].pt.y - keypoints_pre[matches[i].queryIdx].pt.y);
+    img_velocity[point_count] = (keypoints_now[matches[i].trainIdx].pt.x - keypoints_pre[matches[i].queryIdx].pt.x);
+    img_velocity[point_count + 1] = (keypoints_now[matches[i].trainIdx].pt.y - keypoints_pre[matches[i].queryIdx].pt.y);
+    point_count = point_count + 2;
+
   }
 
   descriptors_pre = descriptors_now;
@@ -411,19 +438,23 @@ while(ros::ok())
     l_p = img_vel_all * cart_vel_all.inverse();
 
     cout << "计算出的初始图像雅克比矩阵为：" << l_p << endl;
+
+    key = waitKey(1);
+
     //把算出的矩阵写进txt文档中
-    outfile.open("/home/ctyou/ibvs_ros/src/ibvs_core/x_0.txt", ios::app);
-    if(!outfile.is_open())
-        cout << "can not open!" << endl;
-    for(int i = 0; i < 2 * N; i++)
-    {
-        for(int j = 0; j < 6; j++)
-        {
-            outfile << l_p(i, j) << "\t";
+    if(key == 32) {
+        outfile.open("/home/ctyou/ibvs_ros/src/ibvs_core/x_0.txt", ios::app);
+        if (!outfile.is_open())
+            cout << "can not open!" << endl;
+        for (int i = 0; i < 2 * N; i++) {
+            for (int j = 0; j < 6; j++) {
+                outfile << l_p(i, j) << "\t";
+            }
+            outfile << " " << endl;
         }
-        outfile << " " << endl;
+        outfile.close();
+        break;
     }
-    outfile.close();
     //if(count_i == 10) break;
     count_i++;
   }

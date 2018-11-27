@@ -108,6 +108,7 @@ int main(int argc, char ** argv)
     unsigned int nj = my_chain.getNrOfJoints();
 
     //计算目标图像特征
+    cout << "开始计算目标图像特征，请准备就绪，准备就绪后，请按任意键！" << endl;
     VideoCapture cap;
     cap.open(1);
 
@@ -122,9 +123,6 @@ int main(int argc, char ** argv)
     bret = cap.set(CV_CAP_PROP_FRAME_WIDTH, 1280);
     bret = cap.set(CV_CAP_PROP_FRAME_HEIGHT, 480);
 
-
-    cout << "开始计算目标图像特征，请准备就绪，准备就绪后，请按任意键！" << endl;
-    system("pause");
     Mat src_desired,src_now;
     Mat src_desired_l, src_now_l;
     Mat src_desired_l_gray, src_now_l_gray;
@@ -133,11 +131,11 @@ int main(int argc, char ** argv)
     Ptr<ORB> orb = ORB::create( N, 1.2f, 8, 31, 0, 2, ORB::HARRIS_SCORE, 31, 20);
     double min_dist = 1000, max_dist = 0;
 
-    cap >> src_desired;
+    src_desired = imread("/home/ctyou/visual-servo/visual-servo/build/1.jpg", 1);
 
     if(src_desired.empty())
     {
-        cout << "src_pre is empty" << endl;
+        cout << "src_desired is empty" << endl;
         return -1;
     }
 
@@ -148,7 +146,7 @@ int main(int argc, char ** argv)
 
     MatrixXd x_k_ = MatrixXd::Zero(2 * N * 6,1);   //预估后的状态矩阵
     MatrixXd x_k = MatrixXd::Zero(2 * N * 6,1);    //校正后的状态矩阵
-    MatrixXd A = MatrixXd::Identity(2 * N, 2 * N);
+    MatrixXd A = MatrixXd::Identity(2 * N * 6, 2 * N * 6);
     MatrixXd h_k = MatrixXd::Zero(2 * N, 2 * N * 6);
     MatrixXd k_k = MatrixXd::Zero(2 * N * 6, 2 * N);      //卡尔曼增益矩阵
     MatrixXd p_k_ = MatrixXd::Zero(2 * N * 6, 2 * N * 6); //预估误差协方差矩阵
@@ -161,10 +159,12 @@ int main(int argc, char ** argv)
 
     ifstream infile;
     infile.open("/home/ctyou/ibvs_ros/src/ibvs_core/x_0.txt", ios::in);
-    if(infile.is_open())
+    if(!infile.is_open()) {
         cout << "can not open!" << endl;
+        return -1;
+    }
     int x_0_count = 0;
-    while(!infile.eof())
+    while(x_0_count != 2 * N * 6)
     {
         infile >> x_0(x_0_count, 0);
         x_0_count++;
@@ -222,7 +222,7 @@ int main(int argc, char ** argv)
     int m_n = 0;
     MatrixXd img_jacobi(2 * N, 6);
 
-   //计算当前时刻的图像雅克比
+    //计算当前时刻的图像雅克比
     for(int m = 0; m < 2 * N; m++)
     {
        for(int n = 0; n < 6; n++) {
@@ -364,7 +364,12 @@ int main(int argc, char ** argv)
     velocity_msg.points[0].velocities[4] = joint_vel(4);
     velocity_msg.points[0].velocities[5] = joint_vel(5);
 
-    vel_to_pub.publish(velocity_msg);
+    for(int i = 0; i < 6; i++)
+    {
+        cout << "发送的第" << i << "个速度为： " << joint_vel(i) << endl;
+    }
+
+    //vel_to_pub.publish(velocity_msg);
 
     int vel_count = 0;
     for(int i = 0; i < 2 * N; i++)

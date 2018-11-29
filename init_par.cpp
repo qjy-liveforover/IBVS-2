@@ -66,10 +66,10 @@ int main(int argc, char ** argv)
 {
 
 ros::init(argc, argv, "init_par");
-ros::NodeHandle n;
+ros::NodeHandle n_ros;
 
-ros::Subscriber sub_joint_pos = n.subscribe("joint_states", 100, joint_position_callback);
-ros::Publisher velocity_pub = n.advertise<trajectory_msgs::JointTrajectory>("ur_driver/joint_speed",100);
+ros::Subscriber sub_joint_pos = n_ros.subscribe("joint_states", 100, joint_position_callback);
+ros::Publisher velocity_pub = n_ros.advertise<trajectory_msgs::JointTrajectory>("ur_driver/joint_speed",100);
 
 Tree my_tree;
 if(!kdl_parser::treeFromFile("/home/ctyou/ibvs_ros/src/ur/universal_robot-kinetic-devel/ur_description/urdf/ur3_robot.urdf", my_tree))
@@ -153,13 +153,14 @@ JntArray jointpositions = JntArray(nj);
 cout << "nj = " << nj << endl;
 
 Frame cartpos;
-bool kinematics_status;
+int kinematics_status;
 ros::spinOnce();
 
 for(int i = 0; i < 6; i++)
 {
     cout << "第" << i << "个关节的角度为：" << joint_position[i] << endl;
 }
+
 for(unsigned int i=0;i<nj;i++)
   jointpositions(i)=joint_position[i];                                  //6个角度实际位置
 
@@ -406,7 +407,6 @@ while(ros::ok())
     img_velocity[point_count] = (keypoints_now[matches[i].trainIdx].pt.x - keypoints_pre[matches[i].queryIdx].pt.x);
     img_velocity[point_count + 1] = (keypoints_now[matches[i].trainIdx].pt.y - keypoints_pre[matches[i].queryIdx].pt.y);
     point_count = point_count + 2;
-
   }
 
   descriptors_pre = descriptors_now;
@@ -466,4 +466,3 @@ while(ros::ok())
 }
 
 return 0;
-}

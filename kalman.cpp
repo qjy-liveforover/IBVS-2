@@ -204,7 +204,6 @@ int main(int argc, char ** argv)
 
     while(ros::ok())
     {
-        cout << "yes1!" << endl;
         ros::spinOnce();
         loop_rate.sleep();
     //预测值
@@ -218,7 +217,7 @@ int main(int argc, char ** argv)
     k_k = P_k_[j] * H_k[j - 1].transpose() * (H_k[j - 1] * P_k_[j] * H_k[j - 1].transpose() + R).inverse();
     K_k.push_back(k_k);
     //测量值
-    y_k = H_k[j - 1] * X_k[j - 1] + rand;
+    y_k = H_k[j - 1] * X_k[j - 1];
     Y_k.push_back(y_k);
     //估计值
     x_k = X_k_[j] + K_k[j] * (Y_k[j] - H_k[j - 1] * X_k_[j]);
@@ -230,7 +229,7 @@ int main(int argc, char ** argv)
     int m_n = 0;
     MatrixXd img_jacobi(2 * N, 6);
 
-    //计算当前时刻的图像雅克比
+    //计算当前时刻的交互矩阵
     for(int m = 0; m < 2 * N; m++)
     {
        for(int n = 0; n < 6; n++) {
@@ -252,11 +251,6 @@ int main(int argc, char ** argv)
     Jacobian ro_jac(nj);
     //SetToZero(&ro_jac);
 
-    for(unsigned int i = 0; i < 6; i++)
-    {
-        cout << joint_pos(i) << endl;
-    }
-
     kinematics_status = jacsolver.JntToJac(joint_pos, ro_jac);
 
     for(unsigned int i_i = 0; i_i < 6; i_i++){
@@ -267,18 +261,30 @@ int main(int argc, char ** argv)
 
     MatrixXd jac_all = img_jacobi * ro_jacobi;
     JacobiSVD<MatrixXd> svd(jac_all, ComputeFullU | ComputeFullV);
-    int asize = int(svd.singularValues().size());
-    MatrixXd values = MatrixXd::Zero(asize, asize);
-    for(int i = 0; i < asize; i++)
-    {
-        values(i, i) = svd.singularValues()(i);
-    }
+
     int jac_row = jac_all.rows();
     int jac_col = jac_all.cols();
-    MatrixXd S_inv = MatrixXd::Zero(jac_col, jac_row);
-    S_inv.block(0, 0, asize, asize) = values.inverse();
+    int min_rc;
+    if(jac_row > jac_col)
+        min_rc = jac_col;
+    else min_rc = jac_row;
 
-    MatrixXd jac_inv = (svd.matrixV()) * (S_inv) * (svd.matrixU().transpose()); //计算出的广义逆
+    double pinvtoler = 1.e-8;
+    MatrixXd singularValues_inv = svd.singularValues();
+    MatrixXd singularValues_inv_mat = MatrixXd::Zero(jac_col, jac_row);
+
+    for(int i = 0; i < min_rc; i++)
+    {
+        if(singularValues_inv(i) > pinvtoler)
+            singularValues_inv(i) = 1.0 / singularValues_inv(i);
+        else singularValues_inv(i) = 0;
+    }
+
+    for(int i = 0; i < min_rc; i++)
+        singularValues_inv_mat(i, i) = singularValues_inv(i);
+
+
+    MatrixXd jac_inv = (svd.matrixV()) * (singularValues_inv_mat) * (svd.matrixU().transpose()); //计算出的广义逆
 
     //开始计算当前的图像特征
     cap >> src_now;
@@ -338,12 +344,12 @@ int main(int argc, char ** argv)
         joint_vel_ma_1 = jac_inv * e_imgvel_con[1];
         joint_vel_ma_2 = jac_inv * e_imgvel_con[2];
 
-        joint_vel_delta(0) = p_k * (joint_vel_ma_0(0, 0) - joint_vel_ma_1(0, 0)) + i_k * joint_vel_ma_0(0, 0) + d_k * (joint_vel_ma_0(0, 0) - 2 * joint_vel_ma_1(0, 0) + joint_vel_ma_1(0, 0));
-        joint_vel_delta(1) = p_k * (joint_vel_ma_0(1, 0) - joint_vel_ma_1(1, 0)) + i_k * joint_vel_ma_0(1, 0) + d_k * (joint_vel_ma_0(1, 0) - 2 * joint_vel_ma_1(1, 0) + joint_vel_ma_1(1, 0));
-        joint_vel_delta(2) = p_k * (joint_vel_ma_0(2, 0) - joint_vel_ma_1(2, 0)) + i_k * joint_vel_ma_0(2, 0) + d_k * (joint_vel_ma_0(2, 0) - 2 * joint_vel_ma_1(2, 0) + joint_vel_ma_1(2, 0));
-        joint_vel_delta(3) = p_k * (joint_vel_ma_0(3, 0) - joint_vel_ma_1(3, 0)) + i_k * joint_vel_ma_0(3, 0) + d_k * (joint_vel_ma_0(3, 0) - 2 * joint_vel_ma_1(3, 0) + joint_vel_ma_1(3, 0));
-        joint_vel_delta(4) = p_k * (joint_vel_ma_0(4, 0) - joint_vel_ma_1(4, 0)) + i_k * joint_vel_ma_0(4, 0) + d_k * (joint_vel_ma_0(4, 0) - 2 * joint_vel_ma_1(4, 0) + joint_vel_ma_1(4, 0));
-        joint_vel_delta(5) = p_k * (joint_vel_ma_0(5, 0) - joint_vel_ma_1(5, 0)) + i_k * joint_vel_ma_0(5, 0) + d_k * (joint_vel_ma_0(5, 0) - 2 * joint_vel_ma_1(5, 0) + joint_vel_ma_1(5, 0));
+        joint_vel_delta(0) = p_k * (joint_vel_ma_0(0, 0) - joint_vel_ma_1(0, 0)) + i_k * joint_vel_ma_0(0, 0) + d_k * (joint_vel_ma_0(0, 0) - 2 * joint_vel_ma_1(0, 0) + joint_vel_ma_2(0, 0));
+        joint_vel_delta(1) = p_k * (joint_vel_ma_0(1, 0) - joint_vel_ma_1(1, 0)) + i_k * joint_vel_ma_0(1, 0) + d_k * (joint_vel_ma_0(1, 0) - 2 * joint_vel_ma_1(1, 0) + joint_vel_ma_2(1, 0));
+        joint_vel_delta(2) = p_k * (joint_vel_ma_0(2, 0) - joint_vel_ma_1(2, 0)) + i_k * joint_vel_ma_0(2, 0) + d_k * (joint_vel_ma_0(2, 0) - 2 * joint_vel_ma_1(2, 0) + joint_vel_ma_2(2, 0));
+        joint_vel_delta(3) = p_k * (joint_vel_ma_0(3, 0) - joint_vel_ma_1(3, 0)) + i_k * joint_vel_ma_0(3, 0) + d_k * (joint_vel_ma_0(3, 0) - 2 * joint_vel_ma_1(3, 0) + joint_vel_ma_2(3, 0));
+        joint_vel_delta(4) = p_k * (joint_vel_ma_0(4, 0) - joint_vel_ma_1(4, 0)) + i_k * joint_vel_ma_0(4, 0) + d_k * (joint_vel_ma_0(4, 0) - 2 * joint_vel_ma_1(4, 0) + joint_vel_ma_2(4, 0));
+        joint_vel_delta(5) = p_k * (joint_vel_ma_0(5, 0) - joint_vel_ma_1(5, 0)) + i_k * joint_vel_ma_0(5, 0) + d_k * (joint_vel_ma_0(5, 0) - 2 * joint_vel_ma_1(5, 0) + joint_vel_ma_2(5, 0));
 
         joint_vel(0) = joint_vel(0) + joint_vel_delta(0);
         joint_vel(1) = joint_vel(1) + joint_vel_delta(1);
@@ -354,6 +360,7 @@ int main(int argc, char ** argv)
     }
 
     //截止条件
+    /*
     int zero_count = 0;
     for(int i = 0; i < 2 * N; i++)
     {
@@ -363,6 +370,13 @@ int main(int argc, char ** argv)
     cout << "zero_count = " << zero_count << endl;
     if(zero_count == 2 * N)
         break;
+    */
+
+    if(e_imgvel_con[0].determinant() < 10)
+    {
+        cout << "到达目标位置！"<< endl;
+        break;
+    }
 
     MatrixXd e_temp(2 * N, 1);
     e_temp = e_imgvel_con[1];

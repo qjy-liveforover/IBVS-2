@@ -296,8 +296,8 @@ int main(int argc, char ** argv)
 
     src_now_l = src_now.colRange(1,640).clone();
     //cvtColor(src_now_l, src_now_gray, CV_BGR2GRAY, 1);
-    orb -> detect(src_now_l, keypoints_now);
-    orb -> compute(src_now_l, keypoints_now, descriptors_now);
+    orb->detect(src_now_l, keypoints_now);
+    orb->compute(src_now_l, keypoints_now, descriptors_now);
 
     vector<DMatch> matches;
     BFMatcher matcher (NORM_HAMMING);
@@ -408,15 +408,22 @@ int main(int argc, char ** argv)
 
     if(abs((joint_vel(0))) >= 0.5 || abs((joint_vel(1))) >= 0.5 || abs((joint_vel(2))) >= 0.5 || abs((joint_vel(3))) >= 0.5 || abs((joint_vel(4))) >= 0.5 || abs((joint_vel(5))) >= 0.5)
         break;
-
     vel_to_pub.publish(velocity_msg);
+
+    MatrixXd joint_vel_mat(6, 1);
+    MatrixXd d_vel_mat(6, 1);
+    for(int i = 0; i < 6; i++)
+    {
+        joint_vel_mat(i, 0) = joint_vel(i);
+    }
+    d_vel_mat = ro_jacobi * joint_vel_mat;
 
     int vel_count = 0;
     for(int i = 0; i < 2 * N; i++)
     {
         for(int j_count = 0; j_count < 6; j_count++)
         {
-            h_k(i, vel_count) = joint_vel(j_count);
+            h_k(i, vel_count) = d_vel_mat(j_count);
             vel_count++;
         }
     }

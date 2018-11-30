@@ -63,15 +63,14 @@ void joint_position_callback(sensor_msgs::JointState msg)
 
 int main(int argc, char ** argv) {
 
-    ros::init(argc, argv, "init_par");
+    ros::init(argc, argv, "init_par_2");
     ros::NodeHandle n_ros;
 
     ros::Subscriber sub_joint_pos = n_ros.subscribe("joint_states", 100, joint_position_callback);
     ros::Publisher velocity_pub = n_ros.advertise<trajectory_msgs::JointTrajectory>("ur_driver/joint_speed", 100);
 
     Tree my_tree;
-    if (!kdl_parser::treeFromFile(
-            "/home/ctyou/ibvs_ros/src/ur/universal_robot-kinetic-devel/ur_description/urdf/ur3_robot.urdf", my_tree)) {
+    if (!kdl_parser::treeFromFile("/home/ctyou/ibvs_ros/src/ur/universal_robot-kinetic-devel/ur_description/urdf/ur3_robot.urdf", my_tree)) {
         ROS_ERROR("Failed to construct kdl tree");
     }
 
@@ -97,21 +96,19 @@ int main(int argc, char ** argv) {
 
     //图像有关变量
     vector<Mat> src(7);
-    vector<Mat> src_l(7);
     Ptr<ORB> orb = ORB::create(N, 1.2f, 8, 31, 0, 2, ORB::HARRIS_SCORE, 31, 20);
-    double min_dist = 1000, max_dist = 0;
 
     ChainFkSolverPos_recursive fksolver = ChainFkSolverPos_recursive(my_chain);    //正解
     unsigned int nj = my_chain.getNrOfJoints();
     int kinematics_status;
-
-    vector<MatrixXd::Zero(6, 1)> joint_value(7);
+    MatrixXd c = MatrixXd::Zero(6, 1);
+    vector<MatrixXd> joint_value(7, c);
 
     //记录初始位置的图像和关节角度（角度为弧度）
-    cap >> src(0);
+    cap >> src[0];
     ros::spinOnce();
     for (int i = 0; i < 6; i++)
-        joint_value(0)(i, 0) = joint_position[i];
+        joint_value[0](i, 0) = joint_position[i];
 
     //大循环一共循环6次来记录图像和关节角度
     for (int num_count = 1; num_count < 7; num_count++) {
@@ -148,8 +145,7 @@ int main(int argc, char ** argv) {
         current_pos[5] = eal(2, 0);
 
         cout << "机器人现在的位置为：" << "X: " << current_pos[0] << " Y: " << current_pos[1] << " Z: " << current_pos[2]
-             << " yaw "
-             << current_pos[3] << " pitch " << current_pos[4] << " roll " << current_pos[5] << endl;
+             << " yaw " << current_pos[3] << " pitch " << current_pos[4] << " roll " << current_pos[5] << endl;
         double desired_x, desired_y, desired_z, desired_yaw, desired_pitch, desired_roll;
 
         vector<double> desired_pos;
@@ -168,7 +164,6 @@ int main(int argc, char ** argv) {
         VectorXd cart_velocity(6);
 
         ros::Rate loop_rate(100);
-        int count_i = 0;
         int count_pid = 0;
         ofstream outfile;
 
@@ -201,7 +196,7 @@ int main(int argc, char ** argv) {
             current_pos[4] = eal(1, 0);
             current_pos[5] = eal(2, 0);
 
-/*根据上面算出的当前的位置和姿态，求解每个关节应该发送的速度, 运用增量式PID求速度*/
+            /*根据上面算出的当前的位置和姿态，求解每个关节应该发送的速度, 运用增量式PID求速度*/
             double p_k = 0.01, i_k = 0.001, d_k = 0.01;
             VectorXd e(6);
             VectorXd vel_delta(6);
@@ -252,19 +247,6 @@ int main(int argc, char ** argv) {
             e_con[1] = e_con[0];
             e_con[2] = e_tmp;
 
-            for (int i = 0; i < 6; i++) {
-                cout << "发送的第" << i << "个关节的速度为： " << cart_velocity[i] << endl;
-            }
-
-            cout << "与期望坐标的差距： " << endl;
-            for (int i = 0; i < 6; i++) {
-                cout << (desired_pos[i] - current_pos[i]) << endl;
-            }
-
-            if (abs(desired_pos[0] - current_pos[0]) < 0.001 && abs(desired_pos[1] - current_pos[1]) < 0.001 &&
-                abs(desired_pos[2] - current_pos[2]) < 0.001)
-                break;
-
             double d[6];
             d[0] = cart_velocity[0];
             d[1] = cart_velocity[1];
@@ -285,7 +267,19 @@ int main(int argc, char ** argv) {
             ChainIkSolverVel_pinv vel_pinv_solver = ChainIkSolverVel_pinv(my_chain, 0.00001, 150);
             vel_pinv_solver.CartToJnt(jointpositions, my_twist, joint_cal_vel);
 
-            //计算出的要发送的速度
+            for (int i = 0; i < 6; i++) {
+                cout << "发送的第" << i << "个关节的速度为： " << cart_velocity[i] << endl;
+            }
+
+            cout << "与期望坐标的差距： " << endl;
+            for (int i = 0; i < 6; i++) {
+                cout << (desired_pos[i] - current_pos[i]) << endl;
+            }
+
+            if (abs(desired_pos[0] - current_pos[0]) < 0.001 && abs(desired_pos[1] - current_pos[1]) < 0.001 &&
+                abs(desired_pos[2] - current_pos[2]) < 0.001)
+                break;
+
             trajectory_msgs::JointTrajectory velocity_msg;
             velocity_msg.joint_names.resize(6);
             velocity_msg.joint_names[0] = "shoulder_pan_joint";
@@ -309,30 +303,36 @@ int main(int argc, char ** argv) {
         }
 
         cout << "第" << num_count << "个位置已经走完，现在开始记录图像和关节角度" << endl;
-        cap >> src(i);
-        if (src(i).empty()) {
+        cap >> src[num_count];
+        if (src[num_count].empty()) {
             cout << "src is empty" << endl;
             return -1;
         }
 
         for (int i = 0; i < 6; i++)
-            joint_value(i)(i, 0) = joint_position[i];
+            joint_value[num_count](i, 0) = joint_position[i];
     }
 
     cout << "图像采集完毕，开始计算初始复合雅可比矩阵" << endl;
 
-    vector<KeyPoint> keypoints(7);
+    vector<Mat> src_l(7);
+    vector< vector<KeyPoint> > keypoints(7);
     vector<Mat> descriptors(7);
 
-    for (int i = 0; i < 7; i++) {
-        orb->detect(src(i), keypoints(i));
-        orb->compute(src(i), keypoints(i), descriptors(i));
+    for(int i = 0; i < 7; i++)
+    {
+        src_l[i] = src[i].colRange(1, 640).clone();
     }
 
-    vector<vector<DMatch>> matches(6);
+    for (int i = 0; i < 7; i++) {
+        orb->detect(src_l[i], keypoints[i]);
+        orb->compute(src_l[i], keypoints[i], descriptors[i]);
+    }
+
+    vector< vector<DMatch> > matches(6);
     BFMatcher matcher(NORM_HAMMING);
     for (int i = 0; i < 6; i++) {
-        matcher.match(descriptors(i), descriptors(i + 1), matches(i));
+        matcher.match(descriptors[i], descriptors[i + 1], matches[i]);
     }
 
     VectorXd b(2 * N);
@@ -340,11 +340,11 @@ int main(int argc, char ** argv) {
 
     int point_count = 0;
     for (int i = 0; i < 6; i++) {
-        for (int j = 0; j < matches(0).size(); j++) {
-            img_velocity(i)[point_count] = (keypoints(i + 1)[matches(i)[j].trainIdx].pt.x -
-                                            keypoints(i)[matches[i].queryIdx].pt.x);
-            img_velocity(i)[point_count + 1] = (keypoints(i + 1)[matches(i)[j].trainIdx].pt.y -
-                                                keypoints(i)[matches[j].queryIdx].pt.y);
+        for (int j = 0; j < matches[0].size(); j++) {
+            img_velocity[i][point_count] = (keypoints[i + 1][matches[i][j].trainIdx].pt.x -
+                                            keypoints[i][matches[i][j].queryIdx].pt.x);
+            img_velocity[i][point_count + 1] = (keypoints[i + 1][matches[i][j].trainIdx].pt.y -
+                                                keypoints[i][matches[i][j].queryIdx].pt.y);
             point_count = point_count + 2;
         }
         point_count = 0;
@@ -355,8 +355,8 @@ int main(int argc, char ** argv) {
     MatrixXd jac_complex(2 * N, 6);
 
     for (int i = 0; i < 6; i++) {
-        d_s < 2 * N, 1 > (0, i) = img_velocity(i).head(2 * N);  //或者试试img_velocity(i)
-        d_q < 6, 1 > (0, i) = img_velocity(i) < 6, 1 > (0, 0);
+        d_s.block< 2 * N, 1 >(0, i) = img_velocity[i];  //或者试试img_velocity[i]
+        d_q.block< 6, 1 >(0, i) = joint_value[i + 1] - joint_value[i];
     }
 
     jac_complex = d_s * d_q.inverse();
